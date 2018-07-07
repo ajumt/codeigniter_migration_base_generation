@@ -21,6 +21,7 @@ class VpxMigration {
     var $db_name;
     var $email;
     var $tables = '*';
+    var $table_data = array('users','fa_icons','fee_master_item_type','groups','images',' menu','menu_group_detail','menu_groups','product_categories','product_units','route_groups','routes','status','units','users','users_groups');
     var $newline = '\n';
     var $write_file = true;
     var $file_name = '';
@@ -71,9 +72,18 @@ class VpxMigration {
      * @param string $tables
      * @return boolean|string
      */
-    function generate($tables = null) {
+    function generate($tables = null,$data=null) {
         if ($tables)
             $this->tables = $tables;
+        if($data){
+            if(is_string($data))
+                $new_tables = explode(',',$data);
+            elseif(is_array($data))
+                $new_tables = $data;
+            else
+                $new_tables = array();
+            $this->table_data = array_merge($this->table_data,$new_tables);
+        }
 
         $return = '';
         /* open file */
@@ -214,23 +224,46 @@ class VpxMigration {
 
 
             $up .= "\n\t\t" . '## Create Table ' . $table . "\n";
-            foreach ($columns as $column)
+            $col='';
+            $col_key='';
+            foreach ($columns as $i=>$column)
             {
-                $up .= "\t\t" . '$this->dbforge->add_field("' . "`$column[Field]` $column[Type] " . ($column['Null'] == 'NO' ? 'NOT NULL' : 'NULL') .
-                        (
-                        #  if its timestamp column, don't '' around default value .... crap way, but should work for now
-                        $column['Default'] ? ' DEFAULT ' . ($column['Type'] == 'timestamp' ? $column['Default'] : '\'' . $column['Default'] . '\'') : ''
-                        )
-                        . " $column[Extra]\");" . "\n";
-
+                if($i!=0) $col.="\t\t\t\t";
+                $col .= "'".$column['Field']."'=>array(\n";
+                $col.= "\t\t\t\t\t"."'type'=>'". $column['Type'] ."',\n";
+                $col.= $column['Null'] == 'NO' ? '' : "\t\t\t\t\t"."'null'=>TRUE,\n";
+                if($column['Default']!=''){
+                    $col .= "\t\t\t\t\t".'\'Default\'=>'.strcmp($column['Field'],'timestamp')==0 ? ' \'CURRENT_TIMESTAMP\'' : '\'' . $column['Default'] . '\''.",\n";
+                }
+                $col.=$column['Extra']=='auto_increment'?"\t\t\t\t\t".'\'auto_increment\'=>TRUE,'."\n":'';
                 if ($column['Key'] == 'PRI')
-                    $up .= "\t\t" . '$this->dbforge->add_key("' . $column['Field'] . '",true);' . "\n";
+                    $col_key = "\t\t" . '$this->dbforge->add_key("' . $column['Field'] . '",TRUE);' . "\n";
+                $col .= "\t\t\t\t".'),'."\n";
             }
+            $ins_data_query='';
+            if(in_array($table,$this->table_data)) {
+                $query = $this->ci->db_master->query('SELECT * FROM ' . $table);
+                //print_r($query->result_array());
+                $table_ins_data='';
+                foreach($query->result_array() as $row){
+                    $nl_counter=0;
+                    $arr_str='';
+                    foreach($row as $field=>$field_val){
+                        if($field=='id') continue;
+                        $arr_str.='\''.$field.'\'=>\''.$field_val.'\',';
+                        $nl_counter+=strlen($arr_str);
+                    }
+                    $table_ins_data.="\t\t\t".'array('.$arr_str.'),'."\n";
+                }
+                $ins_data_query .= "\n\t\t" . '$this->db->insert_batch(\''.$table.'\',array('."\n" . $table_ins_data . "\n\t\t".'));' . "\n";
+                //foreach ($query->result_array() as $row)
+            }
+            $up .= "\t\t" . '$this->dbforge->add_field('."\n\t\t\t".'array('."\n\t\t\t\t" .$col."\t\t\t\t".'));';
+            $up .= "\n".$col_key;
             $up .= "\t\t" . '$this->dbforge->create_table("' . $table . '", TRUE);' . "\n";
             if (isset($engines['Engine']) and $engines['Engine'])
                 $up .= "\t\t" . '$this->db->query(\'ALTER TABLE  ' . $this->ci->db_master->protect_identifiers($table) . ' ENGINE = ' . $engines['Engine']. '\');';
-
-
+            $up .= $ins_data_query;
             $down .= "\t\t" . '### Drop table ' . $table . ' ##' . "\n";
             $down .= "\t\t" . '$this->dbforge->drop_table("' . $table . '", TRUE);' . "\n";
 
@@ -266,5 +299,4 @@ class VpxMigration {
     }
 
 }
-
 ?>
